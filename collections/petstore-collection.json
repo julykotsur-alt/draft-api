@@ -1,0 +1,439 @@
+{
+  "info": {
+    "_postman_id": "427bbfad-ba70-5b7f-8080-738e2697015f",
+    "name": "Petstore API regression: Pet CRUD",
+    "description": "API regression for Swagger Petstore v3 (https://petstore3.swagger.io/api/v3).\n\nFlow: Create pet -> Get -> Update -> Get -> Delete -> Verify deletion.\nEach run generates a unique pet, checks status codes from the OpenAPI document, the Pet response schema and data consistency, then deletes the pet it created.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1. Create pet",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// Unique int64 id: current ms timestamp * 1000 + random 0..999.",
+              "// Stays below Number.MAX_SAFE_INTEGER, so it survives JSON round-trips without precision loss.",
+              "const petId = Date.now() * 1000 + Math.floor(Math.random() * 1000);",
+              "const randomInt = () => Math.floor(Math.random() * 1000000) + 1;",
+              "const statuses = [\"available\", \"pending\", \"sold\"];",
+              "",
+              "const pet = {",
+              "    id: petId,",
+              "    name: \"regress-\" + pm.variables.replaceIn(\"{{$randomFirstName}}\").toLowerCase() + \"-\" + petId,",
+              "    category: { id: randomInt(), name: pm.variables.replaceIn(\"{{$randomWord}}\") },",
+              "    photoUrls: [\"https://example.com/pets/\" + petId + \"/\" + pm.variables.replaceIn(\"{{$randomUUID}}\") + \".png\"],",
+              "    tags: [{ id: randomInt(), name: \"api-regression-\" + pm.variables.replaceIn(\"{{$randomWord}}\") }],",
+              "    status: statuses[Math.floor(Math.random() * statuses.length)]",
+              "};",
+              "",
+              "pm.collectionVariables.set(\"petId\", String(petId));",
+              "pm.collectionVariables.set(\"createdPet\", JSON.stringify(pet));",
+              "pm.collectionVariables.unset(\"updatedPet\");",
+              "pm.collectionVariables.set(\"petDeleted\", \"false\");"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const expected = JSON.parse(pm.collectionVariables.get(\"createdPet\"));",
+              "",
+              "pm.test(\"Status code is 200 (addPet: Successful operation)\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test(\"Content-Type is application/json\", function () {",
+              "    pm.expect(pm.response.headers.get(\"Content-Type\") || \"\").to.include(\"application/json\");",
+              "});",
+              "",
+              "pm.test(\"Response matches the Pet schema\", function () {",
+              "    const schema = JSON.parse(pm.collectionVariables.get(\"petSchema\"));",
+              "    pm.response.to.have.jsonSchema(schema);",
+              "});",
+              "",
+              "pm.test(\"Created pet equals the sent payload\", function () {",
+              "    pm.expect(pm.response.json()).to.eql(expected);",
+              "});",
+              "",
+              "pm.test(\"Response time is under 5000 ms\", function () {",
+              "    pm.expect(pm.response.responseTime).to.be.below(5000);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{{createdPet}}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{baseUrl}}/pet",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "pet"
+          ]
+        },
+        "description": "POST /pet (addPet). Payload is generated in the pre-request script with a unique id."
+      }
+    },
+    {
+      "name": "2. Get created pet",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const expected = JSON.parse(pm.collectionVariables.get(\"createdPet\"));",
+              "",
+              "pm.test(\"Status code is 200 (getPetById: successful operation)\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test(\"Content-Type is application/json\", function () {",
+              "    pm.expect(pm.response.headers.get(\"Content-Type\") || \"\").to.include(\"application/json\");",
+              "});",
+              "",
+              "pm.test(\"Response matches the Pet schema\", function () {",
+              "    const schema = JSON.parse(pm.collectionVariables.get(\"petSchema\"));",
+              "    pm.response.to.have.jsonSchema(schema);",
+              "});",
+              "",
+              "pm.test(\"Stored pet equals the created pet\", function () {",
+              "    pm.expect(pm.response.json()).to.eql(expected);",
+              "});",
+              "",
+              "pm.test(\"Response time is under 5000 ms\", function () {",
+              "    pm.expect(pm.response.responseTime).to.be.below(5000);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/pet/{{petId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "pet",
+            "{{petId}}"
+          ]
+        },
+        "description": "GET /pet/{petId} (getPetById) right after creation."
+      }
+    },
+    {
+      "name": "3. Update pet",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const created = JSON.parse(pm.collectionVariables.get(\"createdPet\"));",
+              "const randomInt = () => Math.floor(Math.random() * 1000000) + 1;",
+              "const otherStatuses = [\"available\", \"pending\", \"sold\"].filter(s => s !== created.status);",
+              "",
+              "// Same id, every other field changed, so the update is observable.",
+              "const updated = {",
+              "    id: created.id,",
+              "    name: created.name + \"-upd-\" + pm.variables.replaceIn(\"{{$randomAlphaNumeric}}\"),",
+              "    category: { id: created.category.id + 1, name: pm.variables.replaceIn(\"{{$randomWord}}\") + \"-upd\" },",
+              "    photoUrls: created.photoUrls.concat([\"https://example.com/pets/\" + created.id + \"/updated-\" + pm.variables.replaceIn(\"{{$randomUUID}}\") + \".png\"]),",
+              "    tags: created.tags.concat([{ id: randomInt(), name: \"updated-\" + pm.variables.replaceIn(\"{{$randomWord}}\") }]),",
+              "    status: otherStatuses[Math.floor(Math.random() * otherStatuses.length)]",
+              "};",
+              "",
+              "pm.collectionVariables.set(\"updatedPet\", JSON.stringify(updated));"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const created = JSON.parse(pm.collectionVariables.get(\"createdPet\"));",
+              "const expected = JSON.parse(pm.collectionVariables.get(\"updatedPet\"));",
+              "",
+              "pm.test(\"Status code is 200 (updatePet: Successful operation)\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test(\"Content-Type is application/json\", function () {",
+              "    pm.expect(pm.response.headers.get(\"Content-Type\") || \"\").to.include(\"application/json\");",
+              "});",
+              "",
+              "pm.test(\"Response matches the Pet schema\", function () {",
+              "    const schema = JSON.parse(pm.collectionVariables.get(\"petSchema\"));",
+              "    pm.response.to.have.jsonSchema(schema);",
+              "});",
+              "",
+              "pm.test(\"Updated pet equals the sent payload\", function () {",
+              "    pm.expect(pm.response.json()).to.eql(expected);",
+              "});",
+              "",
+              "pm.test(\"Id is unchanged and the other fields changed\", function () {",
+              "    const body = pm.response.json();",
+              "    pm.expect(body.id).to.eql(created.id);",
+              "    pm.expect(body.name).to.not.eql(created.name);",
+              "    pm.expect(body.status).to.not.eql(created.status);",
+              "});",
+              "",
+              "pm.test(\"Response time is under 5000 ms\", function () {",
+              "    pm.expect(pm.response.responseTime).to.be.below(5000);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{{updatedPet}}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{baseUrl}}/pet",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "pet"
+          ]
+        },
+        "description": "PUT /pet (updatePet). Changes every field except id."
+      }
+    },
+    {
+      "name": "4. Get updated pet",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const created = JSON.parse(pm.collectionVariables.get(\"createdPet\"));",
+              "const expected = JSON.parse(pm.collectionVariables.get(\"updatedPet\"));",
+              "",
+              "pm.test(\"Status code is 200 (getPetById: successful operation)\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test(\"Content-Type is application/json\", function () {",
+              "    pm.expect(pm.response.headers.get(\"Content-Type\") || \"\").to.include(\"application/json\");",
+              "});",
+              "",
+              "pm.test(\"Response matches the Pet schema\", function () {",
+              "    const schema = JSON.parse(pm.collectionVariables.get(\"petSchema\"));",
+              "    pm.response.to.have.jsonSchema(schema);",
+              "});",
+              "",
+              "pm.test(\"Stored pet equals the updated pet\", function () {",
+              "    pm.expect(pm.response.json()).to.eql(expected);",
+              "});",
+              "",
+              "pm.test(\"Stored pet no longer equals the created pet\", function () {",
+              "    pm.expect(pm.response.json()).to.not.eql(created);",
+              "});",
+              "",
+              "pm.test(\"Response time is under 5000 ms\", function () {",
+              "    pm.expect(pm.response.responseTime).to.be.below(5000);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/pet/{{petId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "pet",
+            "{{petId}}"
+          ]
+        },
+        "description": "GET /pet/{petId} (getPetById) after the update."
+      }
+    },
+    {
+      "name": "5. Delete pet",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// The API answers with plain text \"Pet deleted\" (despite an application/json header),",
+              "// so the body is checked as text, not parsed as JSON.",
+              "pm.test(\"Status code is 200 (deletePet: Pet deleted)\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test(\"Response confirms deletion\", function () {",
+              "    pm.expect(pm.response.text()).to.match(/deleted/i);",
+              "});",
+              "",
+              "pm.test(\"Response time is under 5000 ms\", function () {",
+              "    pm.expect(pm.response.responseTime).to.be.below(5000);",
+              "});",
+              "",
+              "if (pm.response.code === 200) {",
+              "    pm.collectionVariables.set(\"petDeleted\", \"true\");",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "DELETE",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/pet/{{petId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "pet",
+            "{{petId}}"
+          ]
+        },
+        "description": "DELETE /pet/{petId} (deletePet)."
+      }
+    },
+    {
+      "name": "6. Verify deletion",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Status code is 404 (getPetById: Pet not found)\", function () {",
+              "    pm.response.to.have.status(404);",
+              "});",
+              "",
+              "pm.test(\"Response says the pet is not found\", function () {",
+              "    pm.expect(pm.response.text()).to.match(/not found/i);",
+              "});",
+              "",
+              "pm.test(\"Response time is under 5000 ms\", function () {",
+              "    pm.expect(pm.response.responseTime).to.be.below(5000);",
+              "});",
+              "",
+              "// Cleanup safety net: if the pet still exists, delete it again so no test data is left behind.",
+              "const baseUrl = pm.collectionVariables.get(\"baseUrl\");",
+              "const petId = pm.collectionVariables.get(\"petId\");",
+              "const clearRunVariables = () => {",
+              "    [\"petId\", \"createdPet\", \"updatedPet\", \"petDeleted\"].forEach(k => pm.collectionVariables.unset(k));",
+              "};",
+              "",
+              "if (pm.response.code !== 404 && petId) {",
+              "    pm.sendRequest({ url: baseUrl + \"/pet/\" + petId, method: \"DELETE\" }, function (err, res) {",
+              "        console.log(\"Cleanup DELETE /pet/\" + petId + \": \" + (err ? err : res.code));",
+              "        clearRunVariables();",
+              "    });",
+              "} else {",
+              "    clearRunVariables();",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/pet/{{petId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "pet",
+            "{{petId}}"
+          ]
+        },
+        "description": "GET /pet/{petId} must return 404. If the pet still exists, the test script deletes it."
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "https://petstore3.swagger.io/api/v3",
+      "type": "string"
+    },
+    {
+      "key": "petSchema",
+      "value": "{\"$schema\": \"http://json-schema.org/draft-07/schema#\", \"title\": \"Pet (Petstore OpenAPI 3.0 components.schemas.Pet)\", \"type\": \"object\", \"required\": [\"id\", \"name\", \"photoUrls\"], \"properties\": {\"id\": {\"type\": \"integer\"}, \"name\": {\"type\": \"string\"}, \"category\": {\"type\": \"object\", \"properties\": {\"id\": {\"type\": \"integer\"}, \"name\": {\"type\": \"string\"}}}, \"photoUrls\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}}, \"tags\": {\"type\": \"array\", \"items\": {\"type\": \"object\", \"properties\": {\"id\": {\"type\": \"integer\"}, \"name\": {\"type\": \"string\"}}}}, \"status\": {\"type\": \"string\", \"enum\": [\"available\", \"pending\", \"sold\"]}}}",
+      "type": "string"
+    }
+  ]
+}

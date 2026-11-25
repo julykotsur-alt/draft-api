@@ -1,0 +1,20 @@
+# Run outputs (keep the folders, not their contents)
+results/*
+!results/.gitkeep
+reports/*
+!reports/.gitkeep
+
+# Node / newman
+node_modules/
+npm-debug.log*
+
+# Local environments and secrets
+.env
+.env.*
+*.local.json
+*.postman_environment.local.json
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
