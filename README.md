@@ -83,30 +83,71 @@ newman run collections/petstore-collection.json --env-var "baseUrl=http://localh
 
 Workflow [`.github/workflows/newman.yml`](.github/workflows/newman.yml) — **API regression (Newman)**.
 
-**Коли запускається:**
-- push у `main`, якщо змінилися `collections/**` або сам workflow;
-- вручну: **Actions → API regression (Newman) → Run workflow**
-  або `gh workflow run newman.yml --ref main`.
+### Коли запускається
 
-**Що робить:**
-1. Job `newman` (Node 20, `newman@6`, `newman-reporter-htmlextra`) проганяє колекцію
-   з репортерами `cli`, `json` і `htmlextra`. Якщо хоч одна перевірка впала, job завершується з помилкою.
-2. Звіти вивантажуються як артефакти запуску (зберігаються 14 днів), навіть коли тести впали:
+| Подія | Перевірка Jira (`jira-gate`) | Регресія (`newman`) |
+|---|---|---|
+| Щопонеділка о 07:00 UTC (`schedule`) | так | лише якщо знайдено тікети |
+| Вручну з прапорцем `jira_gate` | так | лише якщо знайдено тікети |
+| Вручну без прапорця | ні | завжди |
+| push у `main` (змінилися `collections/**` або workflow) | ні | завжди |
+
+Ручний запуск: **Actions → API regression (Newman) → Run workflow** (прапорець *jira_gate* за бажанням) або:
+
+```bash
+gh workflow run newman.yml --ref main
+gh workflow run newman.yml --ref main -f jira_gate=true
+```
+
+### Jobs
+
+1. **`jira-gate`** ([`scripts/jira-gate.sh`](scripts/jira-gate.sh)):
+   - спершу перевіряє вхід через `GET /rest/api/3/myself`. Jira відповідає на пошук і анонімно
+     (HTTP 200 і 0 тікетів), тому без цієї перевірки неправильний токен виглядав би як «тікетів немає»;
+   - потім шукає тікети через `POST /rest/api/3/search/jql` з JQL
+     `labels = "api-testing" AND status = "Ready for QA" ORDER BY key`;
+   - пише знайдені тікети з посиланнями в summary запуску;
+   - **падає з явною помилкою**, якщо немає секретів чи змінної, вхід не справжній або пошук не вдався.
+     Мовчки не пропускає.
+2. **`newman`** (Node 20, `newman@6`, `newman-reporter-htmlextra`) проганяє колекцію з репортерами
+   `cli`, `json` і `htmlextra`. Якщо хоч одна перевірка впала, job завершується з помилкою.
+   Звіти вивантажуються як артефакти (зберігаються 14 днів) навіть тоді, коли тести впали:
    - `newman-report` — JSON-звіт;
    - `newman-html-report` — HTML-звіт.
-3. Тільки на `main`: job `deploy-report` публікує HTML-звіт на GitHub Pages
-   через `actions/deploy-pages` — теж навіть тоді, коли перевірки впали.
+3. **`publish-report`** — тільки на `main` і тільки якщо `newman` справді відпрацював і створив звіт:
+   публікує HTML-звіт на GitHub Pages через `actions/deploy-pages`, навіть коли перевірки впали.
 
 **Останній звіт:** https://julykotsur-alt.github.io/draft-api/
 
-GitHub Pages у налаштуваннях репозиторію має бути увімкнено з джерелом **GitHub Actions**
+### Налаштування
+
+| Назва | Тип | Значення |
+|---|---|---|
+| `JIRA_BASE_URL` | variable | адреса Jira, наприклад `https://your-site.atlassian.net` |
+| `JIRA_EMAIL` | secret | email Atlassian-акаунта, якому належить токен |
+| `JIRA_API_TOKEN` | secret | API-токен з https://id.atlassian.com/manage-profile/security/api-tokens |
+| `JIRA_JQL` | variable, необов'язкова | інший JQL замість стандартного |
+
+```bash
+gh variable set JIRA_BASE_URL --repo julykotsur-alt/draft-api --body "https://your-site.atlassian.net"
+gh secret set JIRA_EMAIL --repo julykotsur-alt/draft-api
+gh secret set JIRA_API_TOKEN --repo julykotsur-alt/draft-api
+```
+
+`gh secret set` без `--body` попросить вставити значення, і воно не потрапить в історію терміналу.
+
+GitHub Pages має бути увімкнено з джерелом **GitHub Actions**
 (Settings → Pages → Build and deployment → Source).
+
+> Репозиторій публічний: логи й summary запусків, зокрема ключі та назви тікетів Jira, бачать усі.
+> GitHub вимикає `schedule` у публічних репозиторіях, якщо 60 днів не було активності.
 
 ## Структура
 
 ```
 .github/       GitHub Actions workflow
 collections/   Postman-колекції
+scripts/       допоміжні скрипти CI (Jira gate)
 results/       машиночитні результати запусків (JUnit, JSON), не комітяться
 reports/       HTML-звіти, не комітяться
 ```

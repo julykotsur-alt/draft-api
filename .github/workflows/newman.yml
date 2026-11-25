@@ -6,7 +6,15 @@ on:
     paths:
       - "collections/**"
       - ".github/workflows/newman.yml"
+  # Every Monday at 07:00 UTC; runs only if the Jira gate finds tickets.
+  schedule:
+    - cron: "0 7 * * 1"
   workflow_dispatch:
+    inputs:
+      jira_gate:
+        description: "Check Jira first, like the weekly schedule (run only if tickets are Ready for QA)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -16,10 +24,45 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  jira-gate:
+    name: Jira gate (Ready for QA tickets)
+    # Scheduled runs always go through the gate; manual runs only with jira_gate.
+    # Push and a plain manual run skip it and go straight to the regression.
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.jira_gate)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      has_tickets: ${{ steps.gate.outputs.has_tickets }}
+      ticket_count: ${{ steps.gate.outputs.ticket_count }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      # Fails the run (never skips silently) when secrets are missing or the login is not real.
+      - name: Check Jira login and search tickets
+        id: gate
+        env:
+          JIRA_BASE_URL: ${{ vars.JIRA_BASE_URL }}
+          JIRA_JQL: ${{ vars.JIRA_JQL || 'labels = "api-testing" AND status = "Ready for QA" ORDER BY key' }}
+          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+        run: bash scripts/jira-gate.sh
+
   newman:
     name: Run Petstore collection
+    needs: jira-gate
+    # Runs when the gate was not used (push, plain manual run),
+    # or when the gate passed and found tickets.
+    if: >-
+      !cancelled() && (
+        needs.jira-gate.result == 'skipped' ||
+        (needs.jira-gate.result == 'success' && needs.jira-gate.outputs.has_tickets == 'true')
+      )
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    outputs:
+      report_ready: ${{ steps.report.outputs.ready }}
 
     steps:
       - name: Check out repository
@@ -34,6 +77,7 @@ jobs:
         run: npm install -g newman@6 newman-reporter-htmlextra@1
 
       - name: Run collection
+        id: run
         run: |
           mkdir -p results site
           newman run collections/petstore-collection.json \
@@ -63,16 +107,25 @@ jobs:
 
       # Runs even when assertions fail, so the published report shows the failures.
       - name: Upload Pages artifact
-        if: always() && github.ref == 'refs/heads/main' && hashFiles('site/index.html') != ''
+        id: pages_artifact
+        if: always() && github.ref == 'refs/heads/main' && steps.run.outcome != 'skipped' && hashFiles('site/index.html') != ''
         uses: actions/upload-pages-artifact@v5
         with:
           path: site
 
-  deploy-report:
+      - name: Mark report ready for publishing
+        id: report
+        if: always() && steps.pages_artifact.outcome == 'success'
+        run: echo "ready=true" >> "$GITHUB_OUTPUT"
+
+  publish-report:
     name: Publish HTML report to GitHub Pages
     needs: newman
-    # Publish on main whatever the test outcome, unless the run was cancelled.
-    if: always() && github.ref == 'refs/heads/main' && needs.newman.result != 'cancelled'
+    # Only when Newman really ran on main and produced a report (passed or failed assertions).
+    if: >-
+      !cancelled() &&
+      github.ref == 'refs/heads/main' &&
+      needs.newman.outputs.report_ready == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
