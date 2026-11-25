@@ -3,6 +3,7 @@ results/*
 !results/.gitkeep
 reports/*
 !reports/.gitkeep
+site/
 
 # Node / newman
 node_modules/

@@ -30,15 +30,18 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Install Newman 6
-        run: npm install -g newman@6
+      - name: Install Newman 6 and HTML reporter
+        run: npm install -g newman@6 newman-reporter-htmlextra@1
 
       - name: Run collection
         run: |
-          mkdir -p results
+          mkdir -p results site
           newman run collections/petstore-collection.json \
-            --reporters cli,json \
-            --reporter-json-export results/newman-report.json
+            --reporters cli,json,htmlextra \
+            --reporter-json-export results/newman-report.json \
+            --reporter-htmlextra-export site/index.html \
+            --reporter-htmlextra-title "Petstore API regression" \
+            --reporter-htmlextra-browserTitle "Petstore API regression"
 
       - name: Upload JSON report
         if: always()
@@ -48,3 +51,41 @@ jobs:
           path: results/newman-report.json
           if-no-files-found: warn
           retention-days: 14
+
+      - name: Upload HTML report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: newman-html-report
+          path: site/index.html
+          if-no-files-found: warn
+          retention-days: 14
+
+      # Runs even when assertions fail, so the published report shows the failures.
+      - name: Upload Pages artifact
+        if: always() && github.ref == 'refs/heads/main' && hashFiles('site/index.html') != ''
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: site
+
+  deploy-report:
+    name: Publish HTML report to GitHub Pages
+    needs: newman
+    # Publish on main whatever the test outcome, unless the run was cancelled.
+    if: always() && github.ref == 'refs/heads/main' && needs.newman.result != 'cancelled'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5

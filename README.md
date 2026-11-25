@@ -79,9 +79,33 @@ newman run collections/petstore-collection.json --env-var "baseUrl=http://localh
 > Не запускайте з `--bail`: тоді після першої невдалої перевірки newman зупиниться
 > і не дійде до кроків видалення.
 
+## CI (GitHub Actions)
+
+Workflow [`.github/workflows/newman.yml`](.github/workflows/newman.yml) — **API regression (Newman)**.
+
+**Коли запускається:**
+- push у `main`, якщо змінилися `collections/**` або сам workflow;
+- вручну: **Actions → API regression (Newman) → Run workflow**
+  або `gh workflow run newman.yml --ref main`.
+
+**Що робить:**
+1. Job `newman` (Node 20, `newman@6`, `newman-reporter-htmlextra`) проганяє колекцію
+   з репортерами `cli`, `json` і `htmlextra`. Якщо хоч одна перевірка впала, job завершується з помилкою.
+2. Звіти вивантажуються як артефакти запуску (зберігаються 14 днів), навіть коли тести впали:
+   - `newman-report` — JSON-звіт;
+   - `newman-html-report` — HTML-звіт.
+3. Тільки на `main`: job `deploy-report` публікує HTML-звіт на GitHub Pages
+   через `actions/deploy-pages` — теж навіть тоді, коли перевірки впали.
+
+**Останній звіт:** https://julykotsur-alt.github.io/draft-api/
+
+GitHub Pages у налаштуваннях репозиторію має бути увімкнено з джерелом **GitHub Actions**
+(Settings → Pages → Build and deployment → Source).
+
 ## Структура
 
 ```
+.github/       GitHub Actions workflow
 collections/   Postman-колекції
 results/       машиночитні результати запусків (JUnit, JSON), не комітяться
 reports/       HTML-звіти, не комітяться
